@@ -5,11 +5,12 @@
 #include <ESPmDNS.h>
 #include <string.h>
 #include <stdlib.h>
+#include "Ambient.h"
 
 
 #define RXPIN 27
 #define TXPIN 26
-#define CMD_MAX 20
+#define CMD_MAX 40
 #define SSID_MAX 20
 #define PASS_MAX 20
 #define MAX_MOJI 80
@@ -32,7 +33,13 @@ int d_func(char *);
 int mdsn_set(char *);
 int s_send(char *);
 int s_web(char *);
+int start_amb(char *);
+int set_amb(char *);
+int send_amb(char *);
 
+
+
+/* コマンド一覧*/
 const COMMAND_LIST CommandList[] = {
     {ssid_set,            "SS"},          // SSID設定コマンド
     {pas_set,             "PA"},          // パスワード設定コマンド
@@ -40,6 +47,11 @@ const COMMAND_LIST CommandList[] = {
     {mdsn_set,            "MD"},          //MDSN文字列セット
     {s_send,              "SSD"},         //webサーバー文字列表示
     {s_web,               "SWEB"},        //WEBサーバー開始
+    {start_amb,           "SAMB"},        //AMBIENT開始
+    {set_amb,            "STA"},        //AMBIENT用データをセット
+    {send_amb,            "SEA"},        //AMBIENT用データをセット
+    
+    
     {0,0}
 
 };
@@ -66,7 +78,8 @@ HTML_DAT html_dat[DATA_MAX];
 
 
 WebServer server(80);
-
+WiFiClient client;
+Ambient ambient;
 SoftwareSerial ss(RXPIN,TXPIN,false);
 
 void handleRoot() {
@@ -200,6 +213,72 @@ int w_start(char *dumy)
   return 0;
 }
 
+
+
+/****************************************/
+/*  start_amb(char *)                 */
+/*  ChannelIDとKEYをセット                  */
+/*    引数　: input  文字列 ChannelIDとKEY  */
+/*    戻り値　-値　エラー　0 正常終了         */
+/****************************************/
+int start_amb(char *buff)
+{
+  char *channelid_str;
+  char *key;
+  char *none;
+
+  int channelid;
+  channelid_str = strtok(buff," ");
+  key = strtok(NULL," ");
+  if(key == NULL){
+    Serial.println("NO_STR");
+  }
+  channelid = (int)strtoul(channelid_str,&none,10);
+
+  
+  ambient.begin(channelid, key, &client);  //  チャネルIDとライトキーを指定してAmbientの初期化
+
+ 
+}
+
+
+
+/****************************************/
+/*  set_amb(char *)                 */
+/*  チャート番号と送信データをセット                  */
+/*    引数　: input  文字列 ChannelIDとKEY  */
+/*    戻り値　-値　エラー　0 正常終了         */
+/****************************************/
+int set_amb(char *buff)
+{
+  char *chart_str;
+  char *data_str;
+  int chart,txdata;
+  char *none;
+
+  chart_str = strtok(buff," ");
+  data_str = strtok(NULL," ");
+  
+  chart = (int)strtoul(chart_str,&none,10);
+  txdata = (int)strtoul(data_str,&none,10);
+
+
+  ambient.set(chart, txdata);  //  チャート番号とデータをパケットにセット
+  return 0;
+}
+
+
+/****************************************/
+/*  send_amb(char *)                    */
+/*  データを送信する                      */
+/*    引数　: ダミー                      */
+/*    戻り値　-値　エラー　0 正常終了         */
+/****************************************/
+int send_amb(char *buff)
+{
+  ambient.send();  //  チャート番号とデータを送信する
+  return 0;
+}
 /****************************************/
 /*   command(_UBYTE *)                          */
 /*  文字列から、コマンドを抽出して実行  */
@@ -215,9 +294,8 @@ int command_exe(char *buff)
   select =0;
   cmnd = strtok(buff," ");
   Serial.println(cmnd);
-
  
-  cmdstring = strtok(NULL," ");
+  cmdstring = strtok(NULL,"\n");
   /* コマンド文字列検索および実行 */
   cmd_on = 0;
   while(CommandList[select].funcname != 0){
@@ -265,7 +343,7 @@ void loop(){
     
     str = ss.read();
     Serial.println(str);
-    Serial.println(str,HEX);
+//    Serial.println(str,HEX);
     
     if(cmd_pointer < CMD_MAX){
       if(str > 0x09 && str < 0x7a){

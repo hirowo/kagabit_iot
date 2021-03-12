@@ -11,8 +11,8 @@
 #define RXPIN 27
 #define TXPIN 26
 #define CMD_MAX 40
-#define SSID_MAX 20
-#define PASS_MAX 20
+#define SSID_MAX 40
+#define PASS_MAX 40
 #define MAX_MOJI 80
 #define DATA_MAX 10
 

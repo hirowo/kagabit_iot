@@ -5,8 +5,11 @@
 #include <ESPmDNS.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include "Ambient.h"
 
+
+#include "PubSubClient.h"
 
 #define RXPIN 27
 #define TXPIN 26
@@ -16,6 +19,13 @@
 #define MAX_MOJI 80
 #define DATA_MAX 10
 
+// DISPLAY SETTINGS
+#define OLED_ADDRESS 0x3C
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+//MQTT関連
+#define DATA_LENGTH 32
 
 /*** データ構造定義 ***/
 /* コマンド関数とコマンド文字列のマッピング */
@@ -25,17 +35,24 @@ typedef struct {
 } COMMAND_LIST;
 
 /* プロトタイプ宣言 */
-int command_exe(char *);
-int ssid_set(char *);
-int pas_set(char *);
+int command_exe(char *);//コマンド実行
+int ssid_set(char *);//SSIDをセット
+int pas_set(char *);// PASSWORDをセット
 int w_start(char *);
 int d_func(char *);
 int mdsn_set(char *);
 int s_send(char *);
 int s_web(char *);
 int start_amb(char *);
+//AMBIENT関連
 int set_amb(char *);
 int send_amb(char *);
+//MQTT関連
+int set_mqtt(char *);
+int mqtt_sub(char *);
+int mqtt_pub(char *);
+
+const int mqttPort = 1883;
 
 
 
@@ -50,8 +67,9 @@ const COMMAND_LIST CommandList[] = {
     {start_amb,           "SAMB"},        //AMBIENT開始
     {set_amb,            "STA"},        //AMBIENT用データをセット
     {send_amb,            "SEA"},        //AMBIENT用データをセット
-    
-    
+    {set_mqtt,            "SMT"},        //MQTTサーバーに接続
+    {mqtt_sub,            "SUB"},        //SUBする
+    {mqtt_pub,            "PUB"},        //PUBする
     {0,0}
 
 };
@@ -75,12 +93,16 @@ typedef struct{
 }HTML_DAT;
 
 HTML_DAT html_dat[DATA_MAX];
+// MQTTクライアントID格納用
+char mqtt_clientid[30];
+int mqtt_subd;
 
 
 WebServer server(80);
 WiFiClient client;
 Ambient ambient;
 SoftwareSerial ss(RXPIN,TXPIN,false);
+PubSubClient mqttclient(client);
 
 void handleRoot() {
   int i;
@@ -207,6 +229,7 @@ int w_start(char *dumy)
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+    WiFi.begin(ssid, pass);
   }
   ss.write('$');  
   Serial.println("connect");
@@ -280,6 +303,97 @@ int send_amb(char *buff)
   return 0;
 }
 /****************************************/
+/*  callback(char *)                    */
+/*  MQTTサーバーで受信したらコールされる。      */
+/*    引数　: １トピック　2 受信データ先頭アドレス　3 受信長　*/
+/*    戻り値　なし         */
+/****************************************/
+
+void callback(char* topic, byte* payload, unsigned int length) {
+    char payload_ch[DATA_LENGTH];
+    int chlen = min(DATA_LENGTH-1, (int)length);
+    memcpy(payload_ch, payload, chlen);
+    payload_ch[chlen] = 0;
+ 
+    Serial.println(payload_ch);
+    //micro:bitに送信
+    ss.write('#'); 
+    ss.write(' '); 
+    ss.println(payload_ch);
+}
+
+/****************************************/
+/*  set_mqtt(char *)                    */
+/*  MQTTサーバーに接続する                      */
+/*    引数　: MQTTサーバーアドレス                      */
+/*    戻り値　-値　エラー　0 正常終了         */
+/****************************************/
+int  set_mqtt(char *buff)
+{
+  byte mac_addr[6];
+  WiFi.macAddress(mac_addr);
+  mqttclient.setServer(buff, mqttPort);
+  mqttclient.setCallback(callback);
+  while (!mqttclient.connected()) {
+    Serial.println("Connecting to MQTT…");
+    sprintf(mqtt_clientid, "ESP32CLI_%02x%02x%02x%02x%02x%02x", mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
+    Serial.println("MAC");
+    if (mqttclient.connect(mqtt_clientid)){
+          Serial.println("connected");
+    } else {
+      Serial.print("Failed with state ");
+      Serial.print(mqttclient.state());
+      delay(2000);
+    }
+  }
+  
+ 
+}
+/****************************************/
+/*  mqtt_sub(char *)                    */
+/*  MQTTサーバーからサブスクライブする                      */
+/*    引数　: mqttトピック                      */
+/*    戻り値　-値　エラー　0 正常終了         */
+/****************************************/
+int mqtt_sub(char *buff){
+  
+  if (!mqttclient.connected()) {
+      Serial.print("Waiting MQTT connection...");
+      while (!mqttclient.connected()) { // 非接続のあいだ繰り返す
+          if (mqttclient.connect(mqtt_clientid)) {
+              mqttclient.subscribe(buff);
+          } else {
+              delay(2000);
+          }
+      }
+      Serial.println("connected");
+  }
+  else {
+      Serial.println(buff);
+      mqttclient.subscribe(buff);
+      mqtt_subd = 1;
+      Serial.println("subsc");
+  }
+  return 0;
+}
+
+
+
+int mqtt_pub(char *buff){
+  char *topic_str;
+  char *data_str;
+  int mqtt_topic,txdata;
+  char *none;
+
+
+  topic_str = strtok(buff," ");
+  data_str = strtok(NULL," ");
+
+  txdata = (int)strtoul(data_str,&none,10);
+  mqttclient.publish(topic_str , data_str, true);
+}
+
+/****************************************/
 /*   command(_UBYTE *)                          */
 /*  文字列から、コマンドを抽出して実行  */
 /*    引数　: input  文字列             */
@@ -329,6 +443,8 @@ void setup(){
   cmd_pointer =0;
   server_on =0;
   po = 0;
+  Serial.println("start ver 0.2\r\n");
+  mqtt_subd = 0;
 }
 
 
@@ -338,12 +454,13 @@ void setup(){
 void loop(){
   char str;
   int i;
+
+
   //1文字以上受信していたら
   while (ss.available() > 0) {
     
     str = ss.read();
     Serial.println(str);
-//    Serial.println(str,HEX);
     
     if(cmd_pointer < CMD_MAX){
       if(str > 0x09 && str < 0x7a){
@@ -367,5 +484,8 @@ void loop(){
   }
   if(server_on == 1){
     server.handleClient();
+  }
+  if(mqtt_subd == 1){
+    mqttclient.loop();
   }
 }

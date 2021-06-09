@@ -17,7 +17,7 @@
 #define SSID_MAX 40
 #define PASS_MAX 40
 #define MAX_MOJI 80
-#define DATA_MAX 10
+#define DATA_MAX 90
 
 // DISPLAY SETTINGS
 #define OLED_ADDRESS 0x3C
@@ -97,6 +97,8 @@ HTML_DAT html_dat[DATA_MAX];
 char mqtt_clientid[30];
 int mqtt_subd;
 
+//macアドレス格納領域
+byte mac_addr[6];
 
 WebServer server(80);
 WiFiClient client;
@@ -175,7 +177,7 @@ int pas_set(char *buff)
 
 /****************************************/
 /*   mdsn_set(char *)                 */
-/*  SSIDとPASSWORDをセット
+/*  ホスト名をセット
 /*    引数　: input  文字列ホスト名             */
 /*    戻り値　-値　エラー　0 正常終了   */
 /****************************************/
@@ -193,9 +195,13 @@ int mdsn_set(char *buff)
 /****************************************/
 int s_send(char *buff)
 {
-  strcpy(html_dat[po].data,buff);
-  html_dat[po].on =1;
-  po++;
+  if(sizeof(buff)<MAX_MOJI){
+    strcpy(html_dat[po].data,buff);
+    html_dat[po].on =1;
+    if(po<DATA_MAX){
+      po++;
+    }
+  }
   return 0;
 }
 
@@ -213,12 +219,15 @@ int s_web(char *buff)
   server.onNotFound(handleNotFound);
   server.begin();
   server_on = 1;
+  po = 0;
   return 0;
 }
 
 /****************************************/
 /*   w_start(char *)                 */
-/*  SSIDとPASSWORDをセット
+/*  SSIDとPASSWORDをセット                */
+/*   wi-fiに接続出来たら、micro:bitに対して$を返す*/
+/*   シリアルには、ipアドレスを出力             */
 /*    引数　: input  文字列(未使用)             */
 /*    戻り値　-値　エラー　0 正常終了   */
 /****************************************/
@@ -231,8 +240,10 @@ int w_start(char *dumy)
     Serial.print(".");
     WiFi.begin(ssid, pass);
   }
+  delay(500);
   ss.write('$');  
   Serial.println("connect");
+  Serial.println(WiFi.localIP());
   return 0;
 }
 
@@ -293,7 +304,7 @@ int set_amb(char *buff)
 
 /****************************************/
 /*  send_amb(char *)                    */
-/*  データを送信する                      */
+/*  ambientにデータを送信する                      */
 /*    引数　: ダミー                      */
 /*    戻り値　-値　エラー　0 正常終了         */
 /****************************************/
@@ -317,8 +328,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
  
     Serial.println(payload_ch);
     //micro:bitに送信
-    ss.write('#'); 
-    ss.write(' '); 
+//    ss.write('#'); 
+ //   ss.write(' '); 
     ss.println(payload_ch);
 }
 
@@ -330,8 +341,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
 /****************************************/
 int  set_mqtt(char *buff)
 {
-  byte mac_addr[6];
-  WiFi.macAddress(mac_addr);
   mqttclient.setServer(buff, mqttPort);
   mqttclient.setCallback(callback);
   while (!mqttclient.connected()) {
@@ -351,7 +360,8 @@ int  set_mqtt(char *buff)
 }
 /****************************************/
 /*  mqtt_sub(char *)                    */
-/*  MQTTサーバーからサブスクライブする                      */
+/*  MQTTサーバーからサブスクライブする          */
+/*  受け取っとったら、コールバック関数が呼ばれます */
 /*    引数　: mqttトピック                      */
 /*    戻り値　-値　エラー　0 正常終了         */
 /****************************************/
@@ -438,12 +448,26 @@ int command_exe(char *buff)
 /*********/
 
 void setup(){
+  int i;
   ss.begin(9600);
-  Serial.begin(115200);
+  Serial.begin(9600);
+
+  //バージョン出力
+  Serial.println("start ver 1.0\r\n");
+  
+  //macアドレス読み取り
+  WiFi.macAddress(mac_addr);
+  //端末に出力
+  Serial.println("MAC ADDRESS IS");
+  for(i = 0;i<6;i++){
+    Serial.print(mac_addr[i],HEX);
+    Serial.print(' ');
+  }
+  Serial.println("\r\n");
+  //変数初期化
   cmd_pointer =0;
   server_on =0;
   po = 0;
-  Serial.println("start ver 0.2\r\n");
   mqtt_subd = 0;
 }
 

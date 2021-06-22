@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "Ambient.h"
+#include "time.h"
 
 
 #include "PubSubClient.h"
@@ -51,8 +52,14 @@ int send_amb(char *);
 int set_mqtt(char *);
 int mqtt_sub(char *);
 int mqtt_pub(char *);
-
 const int mqttPort = 1883;
+
+//NTP関連
+int time_get(char *);
+int read_time(char *);
+
+
+
 
 
 
@@ -70,6 +77,9 @@ const COMMAND_LIST CommandList[] = {
     {set_mqtt,            "SMT"},        //MQTTサーバーに接続
     {mqtt_sub,            "SUB"},        //SUBする
     {mqtt_pub,            "PUB"},        //PUBする
+    {time_get,            "TG"},          //時間を取得する
+    {read_time,           "RT"},          //時間を送信する
+    
     {0,0}
 
 };
@@ -378,17 +388,19 @@ int mqtt_sub(char *buff){
       }
       Serial.println("connected");
   }
-  else {
-      Serial.println(buff);
-      mqttclient.subscribe(buff);
-      mqtt_subd = 1;
-      Serial.println("subsc");
-  }
+  Serial.println(buff);
+  mqttclient.subscribe(buff);
+  mqtt_subd = 1;
+  Serial.println("subsc");
+
   return 0;
 }
-
-
-
+/****************************************/
+/*  mqtt_sub(char *)                    */
+/*  MQTTサーバーにパブリッシュする          */
+/*    引数　: mqttトピック　データ           */
+/*    戻り値　-値　エラー　0 正常終了         */
+/****************************************/
 int mqtt_pub(char *buff){
   char *topic_str;
   char *data_str;
@@ -398,10 +410,79 @@ int mqtt_pub(char *buff){
 
   topic_str = strtok(buff," ");
   data_str = strtok(NULL," ");
-
+  if (!mqttclient.connected()) {
+      Serial.print("Waiting MQTT connection...");
+      while (!mqttclient.connected()) { // 非接続のあいだ繰り返す
+          if (mqttclient.connect(mqtt_clientid)) {
+              mqttclient.subscribe(buff);
+          } else {
+              delay(2000);
+          }
+      }
+      Serial.println("connected");
+  }
   txdata = (int)strtoul(data_str,&none,10);
   mqttclient.publish(topic_str , data_str, true);
 }
+
+/****************************************/
+/*  get_tim(char *)                    */
+/*  NTPサーバーから時間を取得する          */
+/*    引数　: ダミー＾　　           */
+/*    戻り値　-値　エラー　0 正常終了         */
+/****************************************/
+const char* ntpServer = "ntp.jst.mfeed.ad.jp";
+const long  gmtOffset_sec = 3600 * 9;
+const int   daylightOffset_sec = 0;
+struct tm timeinfo;
+//init and get the time
+
+int time_get(char *){
+  int rtn;
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  if (!getLocalTime(&timeinfo)) {
+    Serial.println("Failed to obtain time");
+    rtn = -1;
+  }
+  else {
+    rtn =0;
+  }
+  return rtn;
+  
+}
+
+/****************************************/
+/*  read_tim(char *)                    */
+/*  読み取った時間データを送信          */
+/*    引数　: mqttトピック　データ           */
+/*    戻り値　-値　エラー　0 正常終了         */
+/****************************************/
+int read_time(char *date){
+  if(*date == '1'){
+    
+    ss.println(timeinfo.tm_year + 1900);
+  }
+  else if(*date == '2'){
+    ss.println(timeinfo.tm_mon);
+  }
+  else if(*date == '3'){
+    ss.println(timeinfo.tm_mday);
+  }
+  else if(*date == '4'){
+    ss.println(timeinfo.tm_hour);
+  }
+  else if(*date == '5'){
+    ss.println(timeinfo.tm_min);
+  }
+  else if(*date == '6'){
+    ss.println(timeinfo.tm_sec);
+  }
+  else {
+    ss.println("error\n");
+ }
+  
+}
+
 
 /****************************************/
 /*   command(_UBYTE *)                          */

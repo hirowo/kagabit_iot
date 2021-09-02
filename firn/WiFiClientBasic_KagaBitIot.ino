@@ -27,6 +27,8 @@
 
 //MQTT関連
 #define DATA_LENGTH 32
+#define TIMEOUT  10
+
 
 /*** データ構造定義 ***/
 /* コマンド関数とコマンド文字列のマッピング */
@@ -243,15 +245,31 @@ int s_web(char *buff)
 /****************************************/
 int w_start(char *dumy)
 {
+  int rtn;
+  int timeout;
+  timeout = 0;
   WiFi.begin(ssid, pass);
   // Wait for connection
-  while (WiFi.status() != WL_CONNECTED) {
+  while (1) {
+    rtn = WiFi.status();
+    if(rtn == WL_CONNECTED){
+      break;
+    }
+    else if(rtn == WL_CONNECT_FAILED){
+      WiFi.begin(ssid, pass);//リトライ
+    }
     delay(500);
     Serial.print(".");
-    WiFi.begin(ssid, pass);
+    if(timeout < TIMEOUT){
+      timeout++;
+    }
+    else {
+      ss.println("X 1");
+      return -1;
+    }
   }
   delay(500);
-  ss.write('$');  
+  ss.println("$");  
   Serial.println("connect");
   Serial.println(WiFi.localIP());
   return 0;
@@ -279,8 +297,11 @@ int start_amb(char *buff)
   }
   channelid = (int)strtoul(channelid_str,&none,10);
 
-  
-  ambient.begin(channelid, key, &client);  //  チャネルIDとライトキーを指定してAmbientの初期化
+  //  チャネルIDとライトキーを指定してAmbientの初期化
+  if(ambient.begin(channelid, key, &client) != true){
+    //エラーコード送信
+     ss.println("X 2");
+  }
 
  
 }
@@ -306,8 +327,12 @@ int set_amb(char *buff)
   chart = (int)strtoul(chart_str,&none,10);
   txdata = (int)strtoul(data_str,&none,10);
 
+  //  チャート番号とデータをパケットにセット
 
-  ambient.set(chart, txdata);  //  チャート番号とデータをパケットにセット
+  if(ambient.set(chart, txdata) != true){
+     //エラーコード送信
+     ss.println("X 3");
+  }
   return 0;
 }
 
@@ -320,7 +345,10 @@ int set_amb(char *buff)
 /****************************************/
 int send_amb(char *buff)
 {
-  ambient.send();  //  チャート番号とデータを送信する
+  //  チャート番号とデータを送信する
+  if(ambient.send() != true){
+    ss.println("X 4");
+  }
   return 0;
 }
 /****************************************/
@@ -338,8 +366,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
  
     Serial.println(payload_ch);
     //micro:bitに送信
-//    ss.write('#'); 
- //   ss.write(' '); 
+    ss.write('#'); 
+    ss.write(' '); 
     ss.println(payload_ch);
 }
 
@@ -351,6 +379,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
 /****************************************/
 int  set_mqtt(char *buff)
 {
+  int timeout;
+  timeout = 0;
   mqttclient.setServer(buff, mqttPort);
   mqttclient.setCallback(callback);
   while (!mqttclient.connected()) {
@@ -364,6 +394,13 @@ int  set_mqtt(char *buff)
       Serial.print(mqttclient.state());
       delay(2000);
     }
+    if(timeout < TIMEOUT){
+      timeout ++;
+    }
+    else {//タイムアウト処理
+       ss.println("X 5");
+       break;
+    }    
   }
   
  
@@ -377,6 +414,8 @@ int  set_mqtt(char *buff)
 /****************************************/
 int mqtt_sub(char *buff){
   
+  int timeout;
+  timeout = 0;
   if (!mqttclient.connected()) {
       Serial.print("Waiting MQTT connection...");
       while (!mqttclient.connected()) { // 非接続のあいだ繰り返す
@@ -384,6 +423,13 @@ int mqtt_sub(char *buff){
               mqttclient.subscribe(buff);
           } else {
               delay(2000);
+          }
+          if(timeout < TIMEOUT){
+            timeout ++;
+          }
+          else {//タイムアウト処理
+            ss.println("X 5");
+            break;
           }
       }
       Serial.println("connected");
@@ -406,6 +452,8 @@ int mqtt_pub(char *buff){
   char *data_str;
   int mqtt_topic,txdata;
   char *none;
+  int timeout;
+  timeout = 0;
 
 
   topic_str = strtok(buff," ");
@@ -418,6 +466,14 @@ int mqtt_pub(char *buff){
           } else {
               delay(2000);
           }
+          if(timeout < TIMEOUT){
+            timeout ++;
+          }
+          else {//タイムアウト処理
+            ss.println("X 5");
+            break;
+          }
+
       }
       Serial.println("connected");
   }
@@ -442,6 +498,7 @@ int time_get(char *){
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
   if (!getLocalTime(&timeinfo)) {
     Serial.println("Failed to obtain time");
+    ss.println("X 6");
     rtn = -1;
   }
   else {
@@ -458,24 +515,33 @@ int time_get(char *){
 /*    戻り値　-値　エラー　0 正常終了         */
 /****************************************/
 int read_time(char *date){
+
+    ss.write('T'); 
+    ss.write(' '); 
+
   if(*date == '1'){
-    
     ss.println(timeinfo.tm_year + 1900);
+    Serial.println(timeinfo.tm_year + 1900);
   }
   else if(*date == '2'){
-    ss.println(timeinfo.tm_mon);
+    ss.println((timeinfo.tm_mon+1));
+    Serial.println((timeinfo.tm_mon+1));
   }
   else if(*date == '3'){
     ss.println(timeinfo.tm_mday);
+    Serial.println(timeinfo.tm_mday);
   }
   else if(*date == '4'){
     ss.println(timeinfo.tm_hour);
+    Serial.println(timeinfo.tm_hour);
   }
   else if(*date == '5'){
     ss.println(timeinfo.tm_min);
+    Serial.println(timeinfo.tm_min);
   }
   else if(*date == '6'){
     ss.println(timeinfo.tm_sec);
+    Serial.println(timeinfo.tm_sec);
   }
   else {
     ss.println("error\n");
@@ -565,7 +631,7 @@ void loop(){
   while (ss.available() > 0) {
     
     str = ss.read();
-    Serial.println(str);
+//    Serial.println(str);
     
     if(cmd_pointer < CMD_MAX){
       if(str > 0x09 && str < 0x7a){
@@ -573,7 +639,7 @@ void loop(){
         cmd_pointer++;
       }
       else {
-        Serial.print("null");
+//        Serial.print("null");
       }
 
     }
